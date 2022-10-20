@@ -1,0 +1,161 @@
+---
+title: "TCGA_breast.rmd"
+author: "Robbin Nameki"
+date: '2022-10-19'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Coding exercise to analyze and explore TCGA breast data. 
+
+Part 0 - reading, cleaning and re-formatting data sets 
+#Sourcecode
+```{r, eval = TRUE}
+source('rscripts/Utils.R')
+```
+
+#re-formatting rsem matrix to make a) an annotation file (rsem_annot) and b) associated counts matrix (rsem_long)
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#reading data, filtering for primary tumors and setting rownames to be patient barcode
+rsem <- read_rsem() %>%
+  filter(sample_type == "Primary Tumor")
+rownames(rsem) <- rsem$bcr_patient_barcode
+
+#saving annotation columns & making sample_id column to add clinical & copy number data later
+rsem_annot <- rsem[,c("patient_id",
+                      "bcr_patient_barcode",
+                      "sample_type")] %>%
+  mutate(sample_id = 
+            str_trunc(bcr_patient_barcode,
+            width = 15,
+            side = "right",
+            ellipsis = "")) 
+
+#reshaping rsem to long format
+rsem_long <- as.data.frame(t(rsem[,c(4:20505)])) 
+```
+
+#reading & adding relevant clinical and copy number information to annotation file
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#reading & wrangling clinical data
+clinical_data <- read_clinical_data()%>%
+  dplyr::select(Sample.ID,
+                IHC.HER2,
+                HER2.ihc.score,
+                HER2.fish.status) %>%
+  dplyr::rename(sample_id = Sample.ID,
+                ihc_her2 = IHC.HER2,
+                ihc_her2_score =  HER2.ihc.score,
+                fish_her2_status = HER2.fish.status) 
+#reading copy number data
+copy_number <- read_copy_number() %>%
+  dplyr::select(!patient_id)
+
+#merging clinical and copy number data to make annotation with all data (rsem_annot_all)
+rsem_annot_all <- merge(rsem_annot,
+                        clinical_data,
+                        by = "sample_id",
+                        all.x = TRUE)
+rsem_annot_all <- merge(rsem_annot_all,
+                        copy_number,
+                        by = "sample_id",
+                        all.x = TRUE)
+rownames(rsem_annot_all) <- rsem_annot_all$bcr_patient_barcode
+```
+
+#re-setting column order of counts matrix to be the same as the rownames of annotation file
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#re-setting columns of matrix
+rsem_long <- rsem_long[,rownames(rsem_annot_all)]
+
+#double checking that rows and columns match between the two variables
+print(all(rownames(rsem_annot_all) == colnames(rsem_long)))
+
+#removing irrelevant variables up to this point
+rm(clinical_data,
+   copy_number,
+   rsem,
+   rsem_annot)
+```
+
+Part 1 - QC and normalize the RNA dataset.
+#Quality control of raw counts
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#making DESeqDataSet. Rounding counts matrix to fit with DESeq2 input requirements.
+dds <- DESeqDataSetFromMatrix(countData = round(rsem_long),
+                              colData = rsem_annot_all,
+                              design = ~ sample_type)
+#Total sample count
+a <- plot_total_counts(dds)
+
+#Number of genes detected based on thresholds
+b <- plot_gene_detection(dds)
+
+ggarrange(a,b)
+rm(a,b)
+```
+
+#Normalizing RNA-seq data set
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#Option 1 - counts per million. TPM is more ideal, but gene length is not available. 
+rsem_long_norm <- rsem_long/(colSums(rsem_long)/1000000)
+rsem_long_norm_log <- log2(rsem_long_norm+1)
+
+
+#Option 2 - vst normalization with DESeq2. Caveat is that rsem data needs to be rounded and is not ideal.
+#vst normalizing data
+vsd <- vst(dds, 
+           blind=FALSE)
+
+```
+
+#2. Identify HER2+ patients as determined clinically.
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#stacked barchart describing proportion of her2 status patients by IHC
+a <- rsem_annot_all %>%
+  drop_na(ihc_her2) %>%
+  group_by(ihc_her2) %>%
+  summarize(n = n()) %>%
+  ggplot(aes(fill= ihc_her2, 
+             y=n, 
+             x="ihc_her2")) + 
+    geom_bar(position="fill", 
+             stat="identity") +
+  theme_classic()
+
+#stacked barchart describing proportion of her2 status patients by FISH
+b <- rsem_annot_all %>%
+  drop_na(fish_her2_status) %>%
+  group_by(fish_her2_status) %>%
+  filter(!fish_her2_status == "[Not Evaluated]") %>%
+  summarize(n = n()) %>%
+  ggplot(aes(fill= fish_her2_status, 
+             y=n, 
+             x="fish_her2_status")) + 
+    geom_bar(position="fill", 
+             stat="identity") +
+  theme_classic()
+
+ggarrange(a,
+          b)
+rm(a,b)
+```
+
+#3. Cluster the cancer RNA data (PCA, UMAP, etc).
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#Showing top 5 PCs with ihc_her2 data highlighted
+filter <- rsem_annot_all %>% drop_na(ihc_her2)
+plot_pca_scatters(vsd[,filter$bcr_patient_barcode], 
+                  n_PCs = 5, 
+                  color_by = "ihc_her2")
+```
+
+#4. Analyze how RNA, copy number, and clinical status are correlated,
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+
+
+
+
