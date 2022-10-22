@@ -11,17 +11,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Coding exercise to analyze and explore TCGA breast data. 
 
-Part 0 - reading, cleaning and re-formatting data sets 
-#Sourcecode
+# Reading, cleaning and re-formatting data sets 
+## Sourcecode
 ```{r, eval = TRUE}
 source('rscripts/Utils.R')
 ```
 
-#re-formatting rsem matrix to make a) an annotation file (rsem_annot) and b) associated counts matrix (rsem_long)
+## re-formatting rsem matrix to make a) an annotation file (rsem_annot) and b) associated counts matrix (rsem_long)
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-#reading data, filtering for primary tumors and setting rownames to be patient barcode
-rsem <- read_rsem() %>%
-  filter(sample_type == "Primary Tumor")
+#reading data and setting rownames to be patient barcode
+rsem <- read_rsem() 
 rownames(rsem) <- rsem$bcr_patient_barcode
 
 #saving annotation columns & making sample_id column to add clinical & copy number data later
@@ -38,7 +37,7 @@ rsem_annot <- rsem[,c("patient_id",
 rsem_long <- as.data.frame(t(rsem[,c(4:20505)])) 
 ```
 
-#reading & adding relevant clinical and copy number information to annotation file
+## reading & adding relevant HER2/ERBB2 clinical and copy number information to annotation file. Answers Question 2 - "Identify HER2+ patients as determined clinically."
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
 #reading & wrangling clinical data
 clinical_data <- read_clinical_data()%>%
@@ -66,7 +65,7 @@ rsem_annot_all <- merge(rsem_annot_all,
 rownames(rsem_annot_all) <- rsem_annot_all$bcr_patient_barcode
 ```
 
-#re-setting column order of counts matrix to be the same as the rownames of annotation file
+## re-setting column order of counts matrix to be the same as the rownames of annotation file
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
 #re-setting columns of matrix
 rsem_long <- rsem_long[,rownames(rsem_annot_all)]
@@ -81,81 +80,92 @@ rm(clinical_data,
    rsem_annot)
 ```
 
-Part 1 - QC and normalize the RNA dataset.
-#Quality control of raw counts
+# Quality control of rnaseq raw counts & normalizing data to counts per million (CPM). Answers question 1 - "QC and normalize the RNA dataset."
+## Setting up descriptive statistics of clinical data & total counts per million per sample type as a QC metric
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-#making DESeqDataSet. Rounding counts matrix to fit with DESeq2 input requirements.
-dds <- DESeqDataSetFromMatrix(countData = round(rsem_long),
-                              colData = rsem_annot_all,
-                              design = ~ sample_type)
-#Total sample count
-a <- plot_total_counts(dds)
-
-#Number of genes detected based on thresholds
-b <- plot_gene_detection(dds)
-
-ggarrange(a,b)
-rm(a,b)
+T_cpm <- merge(as.data.frame(colSums(rsem_long)/1000000) %>%
+              dplyr::rename(total_counts_per_million = `colSums(rsem_long)/1e+06`) %>%
+              mutate(bcr_patient_barcode = rownames(.)),
+              rsem_annot_all,
+              by = "bcr_patient_barcode",
+              all.x = TRUE)
 ```
 
-#Normalizing RNA-seq data set
+## Violin of total counts per million by sample type (QC metric)
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-#Option 1 - counts per million. TPM is more ideal, but gene length is not available. 
-rsem_long_norm <- rsem_long/(colSums(rsem_long)/1000000)
+print(ggplot(T_cpm,
+            aes(x=sample_type,
+                y=total_counts_per_million)) + 
+  geom_violin() + 
+    geom_boxplot(width=0.1) + 
+    theme_classic())
+```
+
+## Descriptive statistics associated with total counts per million & sample types
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+print(by(T_cpm[,c("total_counts_per_million",
+            "sample_type")],
+   T_cpm$sample_type,
+   summary))
+```
+
+## Normalizing RNA-seq data set to counts per million. TPM is more ideal, however gene length is not available and CPMs will suffice for excercize. 
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#Getting the normalization factor sum of columns/ million
+normFactor <- colSums(rsem_long)/1000000
+
+#normalizing counts matrix with normalization factor to get CPM normalized matrix
+rsem_long_norm <- rsem_long/normFactor
+```
+
+# Exploring unsupervised clustering of primary tumor RNA-seq data. Answers question 3 - Cluster the cancer RNA data (PCA, UMAP, etc). 
+
+## PCA Analysis
+```{r, eval = TRUE, error = FALSE, warnings = FALSE}
+#log transforming normalized matrix for PCA 
 rsem_long_norm_log <- log2(rsem_long_norm+1)
 
+#Principle Component Analysis of 915 (out of 1093) Primary Tumors with IHC status available. Not including metastasis data as there are only 7 samples and removing it will reduce sample type variability. 
+her2_ihc_patients <- rsem_annot_all %>%
+  filter(sample_type == "Primary Tumor") %>%
+  drop_na(ihc_her2)
+pca <- prcomp(t(rsem_long_norm_log[,c(rsem_annot_all[her2_ihc_patients$bcr_patient_barcode,]$bcr_patient_barcode)]))
 
-#Option 2 - vst normalization with DESeq2. Caveat is that rsem data needs to be rounded and is not ideal.
-#vst normalizing data
-vsd <- vst(dds, 
-           blind=FALSE)
+#Retrieving PC1 and PC2 and adding back metadata for visualization
+pca_df <- merge(data.frame(pca$x[,c(1,2)]),
+                her2_ihc_patients,
+                by = "row.names")
 
+#Plotting unsupervised clustering of Primary Tumors overlayed with HER2 status for IHC. There is no clear clustering based on IHC status. 
+a <- ggplot(data = pca_df %>%
+              drop_na(ihc_her2),
+       aes(x = PC1, 
+           y = PC2,
+           color = ihc_her2)) +
+    geom_point(size = 1) +
+    theme_classic()
+
+print(a)
+
+#removing unneeded variables
+rm(pca_df)
 ```
 
-#2. Identify HER2+ patients as determined clinically.
+## Unsupervised heigharcal clustering and heatmap vizualization
 ```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-#stacked barchart describing proportion of her2 status patients by IHC
-a <- rsem_annot_all %>%
-  drop_na(ihc_her2) %>%
-  group_by(ihc_her2) %>%
-  summarize(n = n()) %>%
-  ggplot(aes(fill= ihc_her2, 
-             y=n, 
-             x="ihc_her2")) + 
-    geom_bar(position="fill", 
-             stat="identity") +
-  theme_classic()
+# Calculate variance between samples
+data<- rsem_long_norm_log[,her2_ihc_patients$bcr_patient_barcode]
+vars <- apply(data, 1, var)
 
-#stacked barchart describing proportion of her2 status patients by FISH
-b <- rsem_annot_all %>%
-  drop_na(fish_her2_status) %>%
-  group_by(fish_her2_status) %>%
-  filter(!fish_her2_status == "[Not Evaluated]") %>%
-  summarize(n = n()) %>%
-  ggplot(aes(fill= fish_her2_status, 
-             y=n, 
-             x="fish_her2_status")) + 
-    geom_bar(position="fill", 
-             stat="identity") +
-  theme_classic()
+#subsetting data to 0.99% percentile
+data2 <- data[vars >= quantile(vars, 0.99),]
+rse_annot_all_data2 <- rsem_annot_all[colnames(data2),] %>%
+  dplyr::select(ihc_her2)
 
-ggarrange(a,
-          b)
-rm(a,b)
+# Heatmap visualizing the top 206 variable genes with her2 ihc annotation. This clearly shows that her2 positivity is associated with patients in the far right cluster. 
+pheatmap(data2,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cutree_cols = 4,
+         annotation_col = rse_annot_all_data2)
 ```
-
-#3. Cluster the cancer RNA data (PCA, UMAP, etc).
-```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-#Showing top 5 PCs with ihc_her2 data highlighted
-filter <- rsem_annot_all %>% drop_na(ihc_her2)
-plot_pca_scatters(vsd[,filter$bcr_patient_barcode], 
-                  n_PCs = 5, 
-                  color_by = "ihc_her2")
-```
-
-#4. Analyze how RNA, copy number, and clinical status are correlated,
-```{r, eval = TRUE, error = FALSE, warnings = FALSE}
-
-
-
-
