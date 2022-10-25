@@ -22,6 +22,6 @@ TCGA_breat.Rproj
 **./rscripts/Utils.R**
 * Utility Rscript for libraries and functions. Available only to those permitted.
 
-**./Data** 
+**./data** 
 * TCGA data. Available only to those permitted
 
