@@ -10,7 +10,10 @@ This is a tutorial on how to analyze breast cancer data from The Cancer Genome A
 ```
 git clone https://github.com/Namekir/TCGA_breast
 ```
-2. Open TCGA_breat.Rproj
+2. Open 
+```
+TCGA_breat.Rproj
+```
 
 ## Description of directory/files
 **./rscripts/TCGA_breast_CPM.rmd** 
