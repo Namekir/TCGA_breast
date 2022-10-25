@@ -17,11 +17,11 @@ TCGA_breat.Rproj
 
 ## Description of directory/files
 **./rscripts/TCGA_breast_CPM.rmd** 
- *This file contains the Rmarkdown file with the Rscripts to run the analysis
+ * This file contains the Rmarkdown file with the Rscripts to run the analysis
 
 **./rscripts/Utils.R**
-Utility Rscript for libraries and functions. Available only to those permitted.
+* Utility Rscript for libraries and functions. Available only to those permitted.
 
 **./Data** 
- *TCGA data. Available only to those permitted
+* TCGA data. Available only to those permitted
 
